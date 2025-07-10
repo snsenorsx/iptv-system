@@ -15,13 +15,35 @@ Modern, responsive ve kullanıcı dostu IPTV sistemi. Ubuntu 22.04 ve 24.04 içi
 
 ## 🚀 Hızlı Kurulum
 
-### Ubuntu 22.04 / 24.04 için Tek Komut Kurulum:
+### 🔥 ULTRA Kurulum (Önerilen):
 
 ```bash
 git clone https://github.com/snsenorsx/iptv-system.git
 cd iptv-system
-chmod +x final-install.sh
+chmod +x ultra-install.sh
+./ultra-install.sh
+```
+
+### 📋 Alternatif Kurulum Seçenekleri:
+
+**Ubuntu 22.04 için:**
+```bash
+./install.sh
+```
+
+**Ubuntu 24.04 için:**
+```bash
+./install-ubuntu24.sh
+```
+
+**Tüm Sorunlar Düzeltilmiş:**
+```bash
 ./final-install.sh
+```
+
+**ULTRA Versiyon (En Güncel):**
+```bash
+./ultra-install.sh
 ```
 
 ### Kurulum Süreci:
@@ -30,6 +52,7 @@ chmod +x final-install.sh
 - 📊 **Veritabanı oluşturma** ve M3U parse
 - 🌐 **Web server** konfigürasyonu
 - 🔄 **Systemd servisleri** kurulumu
+- ✅ **Otomatik test** ve doğrulama
 
 ## 📋 Sistem Gereksinimleri
 
@@ -125,7 +148,8 @@ cd iptv-backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python src/main.py
+cd src
+python main.py
 
 # Frontend
 cd iptv-frontend
@@ -149,7 +173,10 @@ iptv-system/
 │   │   ├── contexts/      # State management
 │   │   └── lib/          # API client
 │   └── package.json
-└── final-install.sh       # Kurulum scripti
+├── ultra-install.sh       # ULTRA kurulum scripti (önerilen)
+├── final-install.sh       # Düzeltilmiş kurulum scripti
+├── install-ubuntu24.sh    # Ubuntu 24.04 kurulum scripti
+└── install.sh            # Temel kurulum scripti
 ```
 
 ## 🔒 Güvenlik
@@ -185,27 +212,54 @@ sudo tail -f /var/log/nginx/error.log
 ls -la /opt/iptv-system/iptv-frontend/dist/
 ```
 
-### M3U Güncelleme:
+### Veritabanı Sorunları:
 ```bash
-# Backend'e bağlan ve M3U'yu yeniden parse et
-cd /opt/iptv-system/iptv-backend
-source ../venv/bin/activate
+# Veritabanı kontrolü
+sqlite3 /opt/iptv-system/iptv-backend/src/iptv.db "SELECT COUNT(*) FROM channels;"
+
+# Tabloları listele
+sqlite3 /opt/iptv-system/iptv-backend/src/iptv.db ".tables"
+
+# M3U'yu yeniden parse et
+cd /opt/iptv-system/iptv-backend/src
+source ../../venv/bin/activate
 python -c "
-from src.services.m3u_parser import M3UParser
+from services.m3u_parser import M3UParser
+from models.iptv import IPTVDatabase
+db = IPTVDatabase()
 parser = M3UParser()
-channels = parser.parse_m3u('M3U_URL_BURAYA')
+channels = parser.parse_m3u('https://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts')
 print(f'{len(channels)} kanal güncellendi')
 "
 ```
+
+## 🆕 Sürüm Notları
+
+### v2.0 - ULTRA Edition
+- ✅ Tüm kurulum sorunları düzeltildi
+- ✅ IPTVDatabase sınıfı eklendi
+- ✅ M3U parser tamamen yeniden yazıldı
+- ✅ SQLite veritabanı desteği iyileştirildi
+- ✅ Otomatik test ve doğrulama eklendi
+- ✅ Detaylı hata raporlama
+- ✅ Ubuntu 24.04 tam desteği
+
+### v1.0 - İlk Sürüm
+- ✅ Temel IPTV player
+- ✅ React frontend
+- ✅ Flask backend
+- ✅ M3U parse desteği
 
 ## 📞 Destek
 
 Sorun yaşadığınızda:
 
-1. **Logları kontrol edin** - `sudo journalctl -u iptv-backend -f`
-2. **Servisleri yeniden başlatın** - `sudo systemctl restart iptv-backend nginx`
-3. **Port kontrolü yapın** - `sudo netstat -tlnp | grep :80`
-4. **Disk alanını kontrol edin** - `df -h`
+1. **ULTRA kurulum scriptini kullanın** - `./ultra-install.sh`
+2. **Logları kontrol edin** - `sudo journalctl -u iptv-backend -f`
+3. **Servisleri yeniden başlatın** - `sudo systemctl restart iptv-backend nginx`
+4. **Port kontrolü yapın** - `sudo netstat -tlnp | grep :80`
+5. **Disk alanını kontrol edin** - `df -h`
+6. **Veritabanını kontrol edin** - `sqlite3 /opt/iptv-system/iptv-backend/src/iptv.db ".tables"`
 
 ## 📄 Lisans
 
@@ -214,4 +268,5 @@ Bu proje açık kaynak kodludur ve MIT lisansı altında dağıtılmaktadır.
 ---
 
 **🎉 IPTV System - Modern IPTV çözümünüz hazır!**
+**🚀 ULTRA Edition ile sorunsuz kurulum garantisi!**
 

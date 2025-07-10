@@ -1,19 +1,21 @@
 import requests
 import re
 from datetime import datetime
-from src.models.iptv import db, Category, Channel, M3USource
 from collections import defaultdict
 import urllib3
+import sqlite3
+import os
 
 # SSL uyarılarını devre dışı bırak
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class M3UParser:
-    def __init__(self):
+    def __init__(self, db_path='iptv.db'):
+        self.db_path = db_path
         self.categories = {}
         self.channels = []
         
-    def parse_m3u_url(self, url, source_name="Default Source"):
+    def parse_m3u(self, url, source_name="Default Source"):
         """M3U URL'sini parse et ve veritabanına kaydet"""
         try:
             print(f"M3U linkini indiriliyor: {url}")
@@ -46,36 +48,31 @@ class M3UParser:
             
             print(f"İçerik boyutu: {len(content)} karakter")
             
-            # M3U kaynağını kaydet/güncelle
-            m3u_source = M3USource.query.filter_by(url=working_url).first()
-            if not m3u_source:
-                m3u_source = M3USource(name=source_name, url=working_url)
-                db.session.add(m3u_source)
-            
-            m3u_source.last_updated = datetime.utcnow()
-            
             # M3U içeriğini parse et
             channels_data = self._parse_m3u_content(content)
             
-            # Veritabanını temizle (eski kanalları sil)
+            # Veritabanı bağlantısı
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Eski verileri temizle
             print("Eski kanallar ve kategoriler temizleniyor...")
-            Channel.query.delete()
-            Category.query.delete()
+            cursor.execute('DELETE FROM channels')
+            cursor.execute('DELETE FROM categories')
+            cursor.execute('DELETE FROM watch_sessions')
             
             # Kategorileri kaydet
             print("Kategoriler kaydediliyor...")
             category_map = {}
             for category_name, channel_count in channels_data['categories'].items():
                 if category_name:  # Boş kategori adlarını atla
-                    slug = Category.create_slug(category_name)
-                    category = Category(
-                        name=category_name,
-                        slug=slug,
-                        channel_count=channel_count
+                    slug = self._create_slug(category_name)
+                    cursor.execute(
+                        'INSERT INTO categories (name, slug, channel_count) VALUES (?, ?, ?)',
+                        (category_name, slug, channel_count)
                     )
-                    db.session.add(category)
-                    db.session.flush()  # ID'yi al
-                    category_map[category_name] = category.id
+                    category_id = cursor.lastrowid
+                    category_map[category_name] = category_id
             
             # Kanalları kaydet
             print("Kanallar kaydediliyor...")
@@ -83,25 +80,35 @@ class M3UParser:
             for i, channel_data in enumerate(channels_data['channels']):
                 category_id = category_map.get(channel_data.get('category'))
                 
-                channel = Channel(
-                    name=channel_data.get('name', 'İsimsiz Kanal'),
-                    stream_url=channel_data.get('url', ''),
-                    logo_url=channel_data.get('logo'),
-                    tvg_id=channel_data.get('tvg_id'),
-                    tvg_name=channel_data.get('tvg_name'),
-                    category_id=category_id,
-                    language=self._extract_language(channel_data.get('category', '')),
-                    country=self._extract_country(channel_data.get('category', ''))
-                )
-                db.session.add(channel)
+                cursor.execute('''
+                    INSERT INTO channels 
+                    (name, stream_url, logo_url, tvg_id, tvg_name, category_id, language, country)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    channel_data.get('name', 'İsimsiz Kanal'),
+                    channel_data.get('url', ''),
+                    channel_data.get('logo'),
+                    channel_data.get('tvg_id'),
+                    channel_data.get('tvg_name'),
+                    category_id,
+                    self._extract_language(channel_data.get('category', '')),
+                    self._extract_country(channel_data.get('category', ''))
+                ))
                 
                 # Batch commit
                 if (i + 1) % batch_size == 0:
-                    db.session.commit()
+                    conn.commit()
                     print(f"İşlenen kanal sayısı: {i + 1}")
             
+            # M3U kaynağını kaydet
+            cursor.execute('''
+                INSERT OR REPLACE INTO m3u_sources (name, url, last_updated)
+                VALUES (?, ?, ?)
+            ''', (source_name, working_url, datetime.now().isoformat()))
+            
             # Son commit
-            db.session.commit()
+            conn.commit()
+            conn.close()
             
             result = {
                 'success': True,
@@ -111,15 +118,11 @@ class M3UParser:
             }
             
             print(f"Parse işlemi tamamlandı: {result['total_channels']} kanal, {result['total_categories']} kategori")
-            return result
+            return channels_data['channels']
             
         except Exception as e:
-            db.session.rollback()
             print(f"Parse hatası: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            raise e
     
     def _parse_m3u_content(self, content):
         """M3U içeriğini parse et"""
@@ -182,6 +185,12 @@ class M3UParser:
             'categories': dict(categories)
         }
     
+    def _create_slug(self, name):
+        """İsimden slug oluştur"""
+        slug = re.sub(r'[^\w\s-]', '', name.lower())
+        slug = re.sub(r'[-\s]+', '-', slug)
+        return slug.strip('-')
+    
     def _extract_language(self, category_name):
         """Kategori adından dil kodunu çıkar"""
         if not category_name:
@@ -237,7 +246,4 @@ class M3UParser:
                     return country_code
         
         return None
-
-# Singleton instance
-m3u_parser = M3UParser()
 

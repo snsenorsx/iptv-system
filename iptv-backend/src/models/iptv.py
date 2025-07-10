@@ -1,8 +1,164 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import re
+import sqlite3
+import os
 
 db = SQLAlchemy()
+
+class IPTVDatabase:
+    """IPTV veritabanı yönetim sınıfı"""
+    
+    def __init__(self, db_path='iptv.db'):
+        self.db_path = db_path
+        
+    def create_tables(self):
+        """Veritabanı tablolarını oluştur"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Kategoriler tablosu
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                slug TEXT UNIQUE NOT NULL,
+                channel_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Kanallar tablosu
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                stream_url TEXT NOT NULL,
+                logo_url TEXT,
+                tvg_id TEXT,
+                tvg_name TEXT,
+                category_id INTEGER,
+                language TEXT,
+                country TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES categories (id)
+            )
+        ''')
+        
+        # İzleme oturumları tablosu
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS watch_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                channel_id INTEGER NOT NULL,
+                watch_position INTEGER DEFAULT 0,
+                last_watched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (channel_id) REFERENCES channels (id),
+                UNIQUE(session_id, channel_id)
+            )
+        ''')
+        
+        # M3U kaynakları tablosu
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS m3u_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                last_updated TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        
+    def add_category(self, name, slug=None):
+        """Kategori ekle"""
+        if not slug:
+            slug = Category.create_slug(name)
+            
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                'INSERT OR IGNORE INTO categories (name, slug) VALUES (?, ?)',
+                (name, slug)
+            )
+            conn.commit()
+            category_id = cursor.lastrowid
+            conn.close()
+            return category_id
+        except Exception as e:
+            conn.close()
+            raise e
+            
+    def add_channel(self, channel_data):
+        """Kanal ekle"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO channels 
+                (name, stream_url, logo_url, tvg_id, tvg_name, category_id, language, country)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                channel_data.get('name', ''),
+                channel_data.get('stream_url', ''),
+                channel_data.get('logo_url', ''),
+                channel_data.get('tvg_id', ''),
+                channel_data.get('tvg_name', ''),
+                channel_data.get('category_id'),
+                channel_data.get('language', ''),
+                channel_data.get('country', '')
+            ))
+            conn.commit()
+            channel_id = cursor.lastrowid
+            conn.close()
+            return channel_id
+        except Exception as e:
+            conn.close()
+            raise e
+            
+    def get_category_by_name(self, name):
+        """İsme göre kategori getir"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM categories WHERE name = ?', (name,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'id': result[0],
+                'name': result[1],
+                'slug': result[2],
+                'channel_count': result[3],
+                'created_at': result[4]
+            }
+        return None
+        
+    def update_category_counts(self):
+        """Kategori kanal sayılarını güncelle"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE categories 
+            SET channel_count = (
+                SELECT COUNT(*) 
+                FROM channels 
+                WHERE channels.category_id = categories.id 
+                AND channels.is_active = 1
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
 
 class Category(db.Model):
     __tablename__ = 'categories'
