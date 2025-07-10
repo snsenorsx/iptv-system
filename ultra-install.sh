@@ -2,12 +2,12 @@
 
 # IPTV System - Ultra Installation Script
 # Ubuntu 22.04 & 24.04 Compatible
-# Tüm sorunlar düzeltilmiş - ULTRA versiyon
+# Tüm sorunlar düzeltilmiş - ULTRA versiyon v2.1
 
 set -e
 
-echo "🚀 IPTV System ULTRA Kurulumu Başlıyor..."
-echo "========================================"
+echo "🚀 IPTV System ULTRA Kurulumu v2.1 Başlıyor..."
+echo "=============================================="
 
 # Renk kodları
 RED='\033[0;31m'
@@ -47,6 +47,13 @@ fi
 # Ubuntu versiyon kontrolü
 UBUNTU_VERSION=$(lsb_release -rs)
 log "Ubuntu $UBUNTU_VERSION tespit edildi"
+
+# Eski kurulumu temizle
+log "Eski kurulum temizleniyor..."
+sudo systemctl stop iptv-backend 2>/dev/null || true
+sudo systemctl disable iptv-backend 2>/dev/null || true
+sudo rm -f /etc/systemd/system/iptv-backend.service
+sudo rm -rf /opt/iptv-system 2>/dev/null || true
 
 # Sistem güncellemesi
 log "Sistem güncelleniyor..."
@@ -119,8 +126,9 @@ pip install -r requirements.txt
 log "M3U dosyası parse ediliyor ve veritabanı oluşturuluyor..."
 cd src
 
-# Python script dosyası oluştur
+# Python script dosyası oluştur - v2.1 güncellenmiş
 cat > setup_database.py << 'EOF'
+#!/usr/bin/env python3
 import sys
 import os
 
@@ -128,30 +136,67 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
+print(f"Current directory: {current_dir}")
+print(f"Python path: {sys.path}")
+
+# Dosya varlığını kontrol et
+iptv_file = os.path.join(current_dir, 'models', 'iptv.py')
+print(f"IPTV file exists: {os.path.exists(iptv_file)}")
+
+if os.path.exists(iptv_file):
+    with open(iptv_file, 'r') as f:
+        content = f.read()
+        print(f"File size: {len(content)} characters")
+        if 'class IPTVDatabase' in content:
+            print("✅ IPTVDatabase class found in file")
+        else:
+            print("❌ IPTVDatabase class NOT found in file")
+
 try:
+    # Import test
+    print("Attempting to import IPTVDatabase...")
     from models.iptv import IPTVDatabase
+    print("✅ IPTVDatabase imported successfully")
+    
     from services.m3u_parser import M3UParser
+    print("✅ M3UParser imported successfully")
     
     # Veritabanını oluştur
     print('Veritabanı tabloları oluşturuluyor...')
     db = IPTVDatabase()
     db.create_tables()
+    print("✅ Database tables created")
     
     # M3U'yu parse et
     print('M3U dosyası parse ediliyor...')
     parser = M3UParser()
     m3u_url = 'https://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts'
     channels = parser.parse_m3u(m3u_url)
-    print(f'{len(channels)} kanal başarıyla yüklendi!')
+    print(f'✅ {len(channels)} kanal başarıyla yüklendi!')
     
 except ImportError as e:
-    print(f'Import hatası: {e}')
+    print(f'❌ Import hatası: {e}')
     print('Mevcut dizin:', os.getcwd())
     print('Python path:', sys.path)
+    
+    # Dosya içeriğini debug için göster
+    try:
+        with open('models/iptv.py', 'r') as f:
+            lines = f.readlines()
+            print("First 20 lines of models/iptv.py:")
+            for i, line in enumerate(lines[:20], 1):
+                print(f"{i:2d}: {line.rstrip()}")
+    except Exception as fe:
+        print(f"Could not read file: {fe}")
+    
     sys.exit(1)
 except Exception as e:
-    print(f'Genel hata: {e}')
+    print(f'❌ Genel hata: {e}')
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
+
+print("🎉 Database setup completed successfully!")
 EOF
 
 # Python scriptini çalıştır
@@ -257,7 +302,8 @@ sleep 5
 if sudo systemctl is-active --quiet iptv-backend; then
     success "✅ Backend servisi çalışıyor"
 else
-    error "❌ Backend servisi başlatılamadı"
+    warning "⚠️ Backend servisi başlatılamadı, logları kontrol ediliyor..."
+    sudo journalctl -u iptv-backend --no-pager -n 20
 fi
 
 # Nginx durumu
@@ -291,8 +337,8 @@ fi
 
 # Kurulum tamamlandı
 echo ""
-echo "🎉 IPTV System ULTRA Kurulumu Tamamlandı!"
-echo "========================================="
+echo "🎉 IPTV System ULTRA v2.1 Kurulumu Tamamlandı!"
+echo "==============================================="
 echo ""
 echo "🌐 Web Arayüzü: http://$(hostname -I | awk '{print $1}')"
 echo "📊 API Status: http://$(hostname -I | awk '{print $1}')/api/status"
@@ -300,23 +346,20 @@ echo ""
 echo "📈 Sistem İstatistikleri:"
 echo "   - Kanallar: $CHANNEL_COUNT"
 echo "   - Kategoriler: $CATEGORY_COUNT"
-echo "   - Backend: Çalışıyor"
-echo "   - Frontend: Çalışıyor"
+echo "   - Backend: $(sudo systemctl is-active iptv-backend)"
+echo "   - Frontend: $(sudo systemctl is-active nginx)"
 echo ""
 echo "🔧 Servis Komutları:"
 echo "   - Backend durumu: sudo systemctl status iptv-backend"
 echo "   - Backend yeniden başlat: sudo systemctl restart iptv-backend"
+echo "   - Backend logları: sudo journalctl -u iptv-backend -f"
 echo "   - Nginx durumu: sudo systemctl status nginx"
 echo "   - Nginx yeniden başlat: sudo systemctl restart nginx"
-echo ""
-echo "📋 Log Dosyaları:"
-echo "   - Backend logs: sudo journalctl -u iptv-backend -f"
-echo "   - Nginx logs: sudo tail -f /var/log/nginx/error.log"
 echo ""
 echo "🗄️ Veritabanı:"
 echo "   - Konum: /opt/iptv-system/iptv-backend/src/iptv.db"
 echo "   - Yönetim: sqlite3 /opt/iptv-system/iptv-backend/src/iptv.db"
 echo ""
 echo "✨ Sistem hazır! Tarayıcınızda IP adresinizi ziyaret edin."
-echo "🚀 ULTRA kurulum başarıyla tamamlandı!"
+echo "🚀 ULTRA v2.1 kurulum başarıyla tamamlandı!"
 
