@@ -118,26 +118,47 @@ pip install -r requirements.txt
 # M3U dosyasını parse et ve veritabanını oluştur
 log "M3U dosyası parse ediliyor ve veritabanı oluşturuluyor..."
 cd src
-python3 -c "
+
+# Python script dosyası oluştur
+cat > setup_database.py << 'EOF'
 import sys
 import os
-sys.path.append(os.getcwd())
 
-from models.iptv import IPTVDatabase
-from services.m3u_parser import M3UParser
+# Mevcut dizini Python path'ine ekle
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
-# Veritabanını oluştur
-print('Veritabanı tabloları oluşturuluyor...')
-db = IPTVDatabase()
-db.create_tables()
+try:
+    from models.iptv import IPTVDatabase
+    from services.m3u_parser import M3UParser
+    
+    # Veritabanını oluştur
+    print('Veritabanı tabloları oluşturuluyor...')
+    db = IPTVDatabase()
+    db.create_tables()
+    
+    # M3U'yu parse et
+    print('M3U dosyası parse ediliyor...')
+    parser = M3UParser()
+    m3u_url = 'https://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts'
+    channels = parser.parse_m3u(m3u_url)
+    print(f'{len(channels)} kanal başarıyla yüklendi!')
+    
+except ImportError as e:
+    print(f'Import hatası: {e}')
+    print('Mevcut dizin:', os.getcwd())
+    print('Python path:', sys.path)
+    sys.exit(1)
+except Exception as e:
+    print(f'Genel hata: {e}')
+    sys.exit(1)
+EOF
 
-# M3U'yu parse et
-print('M3U dosyası parse ediliyor...')
-parser = M3UParser()
-m3u_url = 'https://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts'
-channels = parser.parse_m3u(m3u_url)
-print(f'{len(channels)} kanal başarıyla yüklendi!')
-"
+# Python scriptini çalıştır
+python3 setup_database.py
+
+# Cleanup
+rm setup_database.py
 
 # Frontend kurulumu
 log "Frontend kurulumu başlıyor..."
@@ -249,8 +270,8 @@ fi
 # Veritabanı kontrolü
 log "Veritabanı kontrolü yapılıyor..."
 cd /opt/iptv-system/iptv-backend/src
-CHANNEL_COUNT=$(sqlite3 iptv.db "SELECT COUNT(*) FROM channels;")
-CATEGORY_COUNT=$(sqlite3 iptv.db "SELECT COUNT(*) FROM categories;")
+CHANNEL_COUNT=$(sqlite3 iptv.db "SELECT COUNT(*) FROM channels;" 2>/dev/null || echo "0")
+CATEGORY_COUNT=$(sqlite3 iptv.db "SELECT COUNT(*) FROM categories;" 2>/dev/null || echo "0")
 
 if [[ $CHANNEL_COUNT -gt 0 ]]; then
     success "✅ Veritabanında $CHANNEL_COUNT kanal, $CATEGORY_COUNT kategori bulundu"
