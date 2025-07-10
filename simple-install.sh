@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # IPTV System - Simple Installation Script
-# Basit ve çalışan versiyon
+# Basit ve çalışan versiyon - v1.1
 
 set -e
 
-echo "🚀 IPTV System Basit Kurulum Başlıyor..."
-echo "======================================="
+echo "🚀 IPTV System Basit Kurulum v1.1 Başlıyor..."
+echo "============================================="
 
 # Root kontrolü
 if [[ $EUID -eq 0 ]]; then
@@ -20,6 +20,7 @@ sudo systemctl stop iptv-backend 2>/dev/null || true
 sudo systemctl disable iptv-backend 2>/dev/null || true
 sudo rm -f /etc/systemd/system/iptv-backend.service
 sudo rm -rf /opt/iptv-system 2>/dev/null || true
+sudo systemctl stop nginx 2>/dev/null || true
 
 # Sistem güncelle
 echo "📦 Sistem güncelleniyor..."
@@ -38,7 +39,7 @@ cd $PROJECT_DIR
 
 # Proje dosyalarını kopyala
 echo "📋 Proje dosyaları kopyalanıyor..."
-cp -r ~/iptv-system/* .
+cp -r ~/iptv-system/* . 2>/dev/null || true
 
 # Python virtual environment oluştur
 echo "🐍 Python virtual environment oluşturuluyor..."
@@ -47,15 +48,14 @@ source venv/bin/activate
 
 # Backend bağımlılıklarını yükle
 echo "📦 Backend bağımlılıkları yükleniyor..."
-cd iptv-backend
 pip install flask flask-cors requests
 
 # Basit veritabanı ve M3U parser oluştur
 echo "🗄️ Basit veritabanı sistemi oluşturuluyor..."
+mkdir -p src/models
 cd src
 
 # Basit models/iptv.py oluştur
-mkdir -p models
 cat > models/iptv.py << 'EOF'
 import sqlite3
 import requests
@@ -87,7 +87,11 @@ class SimpleIPTV:
     def load_m3u(self, url):
         print(f"📡 M3U yükleniyor: {url}")
         try:
-            response = requests.get(url, timeout=30)
+            # HTTP kullan, HTTPS değil
+            if url.startswith('https://'):
+                url = url.replace('https://', 'http://')
+            
+            response = requests.get(url, timeout=30, verify=False)
             content = response.text
             
             conn = sqlite3.connect(self.db_path)
@@ -121,6 +125,8 @@ class SimpleIPTV:
                             (current_channel['name'], line, current_channel['category'])
                         )
                         count += 1
+                        if count % 1000 == 0:
+                            print(f"📊 {count} kanal işlendi...")
                         current_channel = {}
             
             conn.commit()
@@ -163,9 +169,13 @@ def status():
 
 @app.route('/api/channels')
 def channels():
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 50))
+    offset = (page - 1) * per_page
+    
     conn = sqlite3.connect('iptv.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM channels LIMIT 100')
+    cursor.execute('SELECT * FROM channels LIMIT ? OFFSET ?', (per_page, offset))
     rows = cursor.fetchall()
     conn.close()
     
@@ -184,7 +194,7 @@ def channels():
 def categories():
     conn = sqlite3.connect('iptv.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT category, COUNT(*) FROM channels GROUP BY category')
+    cursor.execute('SELECT category, COUNT(*) FROM channels GROUP BY category ORDER BY COUNT(*) DESC')
     rows = cursor.fetchall()
     conn.close()
     
@@ -204,25 +214,51 @@ def index():
     <html>
     <head>
         <title>IPTV System</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: Arial, sans-serif; margin: 40px; }
-            .container { max-width: 800px; margin: 0 auto; }
+            body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+            .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .header { text-align: center; margin-bottom: 30px; }
             .status { background: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0; }
-            .channel { background: #f5f5f5; padding: 10px; margin: 5px 0; border-radius: 4px; }
-            button { background: #007cba; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+            .controls { margin: 20px 0; text-align: center; }
+            .channel { background: #f9f9f9; padding: 15px; margin: 5px 0; border-radius: 4px; border-left: 4px solid #007cba; }
+            .category { background: #fff3cd; padding: 10px; margin: 5px; border-radius: 4px; display: inline-block; }
+            button { background: #007cba; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; margin: 5px; font-size: 14px; }
             button:hover { background: #005a87; }
+            .loading { text-align: center; padding: 20px; color: #666; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+            @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🎬 IPTV System</h1>
-            <div class="status">
-                <h3>Sistem Durumu</h3>
-                <p id="status">Yükleniyor...</p>
-                <button onclick="loadChannels()">Kanalları Yükle</button>
-                <button onclick="loadM3U()">M3U Güncelle</button>
+            <div class="header">
+                <h1>🎬 IPTV System</h1>
+                <p>Basit ve Çalışan IPTV Player</p>
             </div>
-            <div id="channels"></div>
+            
+            <div class="status">
+                <h3>📊 Sistem Durumu</h3>
+                <p id="status">Yükleniyor...</p>
+                <div class="controls">
+                    <button onclick="loadChannels()">📺 Kanalları Göster</button>
+                    <button onclick="loadCategories()">📂 Kategoriler</button>
+                    <button onclick="loadM3U()">🔄 M3U Güncelle</button>
+                    <button onclick="loadStatus()">📊 Durum Yenile</button>
+                </div>
+            </div>
+            
+            <div class="grid">
+                <div>
+                    <h3>📺 Kanallar</h3>
+                    <div id="channels">Kanalları görmek için butona tıklayın</div>
+                </div>
+                <div>
+                    <h3>📂 Kategoriler</h3>
+                    <div id="categories">Kategorileri görmek için butona tıklayın</div>
+                </div>
+            </div>
         </div>
         
         <script>
@@ -231,26 +267,44 @@ def index():
                     const response = await fetch('/api/status');
                     const data = await response.json();
                     document.getElementById('status').innerHTML = 
-                        `✅ ${data.channels} kanal yüklü - ${data.message}`;
+                        `✅ <strong>${data.channels}</strong> kanal yüklü - ${data.message}`;
                 } catch (error) {
                     document.getElementById('status').innerHTML = '❌ Bağlantı hatası';
                 }
             }
             
             async function loadChannels() {
+                document.getElementById('channels').innerHTML = '<div class="loading">📺 Kanallar yükleniyor...</div>';
                 try {
                     const response = await fetch('/api/channels');
                     const channels = await response.json();
                     const html = channels.map(ch => 
                         `<div class="channel">
-                            <strong>${ch.name}</strong> - ${ch.category}
-                            <br><small>${ch.url}</small>
+                            <strong>${ch.name}</strong>
+                            <br><small>📂 ${ch.category}</small>
+                            <br><small>🔗 ${ch.url.substring(0, 50)}...</small>
                         </div>`
                     ).join('');
-                    document.getElementById('channels').innerHTML = 
-                        `<h3>Kanallar (İlk 100)</h3>${html}`;
+                    document.getElementById('channels').innerHTML = html || 'Kanal bulunamadı';
                 } catch (error) {
                     document.getElementById('channels').innerHTML = '❌ Kanal yükleme hatası';
+                }
+            }
+            
+            async function loadCategories() {
+                document.getElementById('categories').innerHTML = '<div class="loading">📂 Kategoriler yükleniyor...</div>';
+                try {
+                    const response = await fetch('/api/categories');
+                    const categories = await response.json();
+                    const html = categories.map(cat => 
+                        `<div class="category">
+                            <strong>${cat.name}</strong><br>
+                            <small>${cat.count} kanal</small>
+                        </div>`
+                    ).join('');
+                    document.getElementById('categories').innerHTML = html || 'Kategori bulunamadı';
+                } catch (error) {
+                    document.getElementById('categories').innerHTML = '❌ Kategori yükleme hatası';
                 }
             }
             
@@ -260,6 +314,7 @@ def index():
                     const response = await fetch('/api/load-m3u', {method: 'POST'});
                     const data = await response.json();
                     loadStatus();
+                    alert(`✅ ${data.channels} kanal yüklendi!`);
                 } catch (error) {
                     document.getElementById('status').innerHTML = '❌ M3U yükleme hatası';
                 }
@@ -273,7 +328,7 @@ def index():
 
 @app.route('/api/load-m3u', methods=['POST'])
 def load_m3u():
-    url = 'https://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts'
+    url = 'http://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts'
     count = db.load_m3u(url)
     return jsonify({'success': True, 'channels': count})
 
@@ -286,11 +341,15 @@ echo "📡 M3U dosyası yükleniyor..."
 python3 -c "
 from models.iptv import SimpleIPTV
 db = SimpleIPTV()
-db.load_m3u('https://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts')
+db.load_m3u('http://arc4949.xyz:80/get.php?username=turko8ii&password=Tv8828&type=m3u_plus&output=ts')
 "
 
+# Nginx'i durdur ve temizle
+echo "🌐 Nginx temizleniyor ve yeniden yapılandırılıyor..."
+sudo systemctl stop nginx 2>/dev/null || true
+sudo rm -f /etc/nginx/sites-enabled/*
+
 # Nginx konfigürasyonu
-echo "🌐 Nginx konfigürasyonu..."
 sudo tee /etc/nginx/sites-available/iptv-simple > /dev/null <<EOF
 server {
     listen 80;
@@ -300,14 +359,16 @@ server {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 EOF
 
 sudo ln -sf /etc/nginx/sites-available/iptv-simple /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
-sudo systemctl restart nginx
+sudo systemctl start nginx
+sudo systemctl enable nginx
 
 # Systemd servisi
 echo "⚙️ Systemd servisi oluşturuluyor..."
@@ -319,7 +380,7 @@ After=network.target
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=/opt/iptv-system/iptv-backend/src
+WorkingDirectory=/opt/iptv-system/src
 Environment=PATH=/opt/iptv-system/venv/bin
 ExecStart=/opt/iptv-system/venv/bin/python main.py
 Restart=always
@@ -333,20 +394,47 @@ sudo systemctl enable iptv-backend
 sudo systemctl start iptv-backend
 
 # Durum kontrolü
-sleep 3
+sleep 5
 echo ""
-echo "🎉 IPTV System Basit Kurulum Tamamlandı!"
-echo "======================================="
+echo "🎉 IPTV System Basit Kurulum v1.1 Tamamlandı!"
+echo "============================================="
 echo ""
-echo "🌐 Web Arayüzü: http://$(hostname -I | awk '{print $1}')"
+
+# IP adresini al
+SERVER_IP=$(hostname -I | awk '{print $1}')
+echo "🌐 Web Arayüzü: http://$SERVER_IP"
 echo ""
-echo "📊 Durum:"
-echo "   - Backend: $(sudo systemctl is-active iptv-backend)"
-echo "   - Nginx: $(sudo systemctl is-active nginx)"
+
+# Servis durumları
+BACKEND_STATUS=$(sudo systemctl is-active iptv-backend)
+NGINX_STATUS=$(sudo systemctl is-active nginx)
+
+echo "📊 Servis Durumları:"
+echo "   - Backend: $BACKEND_STATUS"
+echo "   - Nginx: $NGINX_STATUS"
 echo ""
-echo "🔧 Komutlar:"
-echo "   - Durum: sudo systemctl status iptv-backend"
-echo "   - Loglar: sudo journalctl -u iptv-backend -f"
+
+# Veritabanı kontrolü
+cd /opt/iptv-system/src
+CHANNEL_COUNT=$(sqlite3 iptv.db "SELECT COUNT(*) FROM channels;" 2>/dev/null || echo "0")
+
+echo "📈 İstatistikler:"
+echo "   - Yüklü Kanallar: $CHANNEL_COUNT"
 echo ""
-echo "✅ Sistem hazır! Tarayıcınızda IP adresinizi ziyaret edin."
+
+echo "🔧 Yönetim Komutları:"
+echo "   - Backend durumu: sudo systemctl status iptv-backend"
+echo "   - Backend logları: sudo journalctl -u iptv-backend -f"
+echo "   - Nginx durumu: sudo systemctl status nginx"
+echo "   - Nginx yeniden başlat: sudo systemctl restart nginx"
+echo ""
+
+if [[ "$BACKEND_STATUS" == "active" && "$NGINX_STATUS" == "active" && $CHANNEL_COUNT -gt 0 ]]; then
+    echo "✅ Sistem tamamen çalışıyor! Tarayıcınızda http://$SERVER_IP adresini ziyaret edin."
+else
+    echo "⚠️ Bazı servisler çalışmıyor olabilir. Yukarıdaki komutlarla kontrol edin."
+fi
+
+echo ""
+echo "🚀 Kurulum tamamlandı!"
 
